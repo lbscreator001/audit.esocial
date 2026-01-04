@@ -5,6 +5,7 @@ import { parseS1200, detectEventType, isEventSupported, getEventDescription } fr
 import { isZipFile, extractXmlsFromZip, validateZipSize, type ExtractedFile } from '../lib/zipExtractor';
 import { routeEsocialEvent } from '../lib/xmlRouter';
 import { parseCompleteEvent } from '../lib/eSocialEventoParser';
+import { getPreviousMonth, compareDates } from '../lib/dateUtils';
 import {
   Upload,
   FileText,
@@ -27,6 +28,7 @@ interface ImportResult {
   eventType?: string;
   destino_sql?: string;
   xml_id?: string;
+  warnings?: string[];
 }
 
 interface UnsupportedFile {
@@ -299,9 +301,57 @@ export function ImportPage() {
       .select()
       .single();
 
-    const { error } = await supabase
-      .from('evt_s1010')
-      .insert(parsedData);
+    const warnings: string[] = [];
+    let error: any = null;
+
+    try {
+      const isInclusao = parsedData.rub_operation_type === 'inclusão';
+
+      if (isInclusao) {
+        const { data: existingRecords } = await supabase
+          .from('evt_s1010')
+          .select('*')
+          .eq('empresa_id', empresa.id)
+          .eq('rub_cod_rubr', parsedData.rub_cod_rubr)
+          .is('rub_fim_valid', null)
+          .order('rub_ini_valid', { ascending: false })
+          .limit(1);
+
+        if (existingRecords && existingRecords.length > 0) {
+          const existingRecord = existingRecords[0];
+          const comparison = compareDates(parsedData.rub_ini_valid, existingRecord.rub_ini_valid);
+
+          if (comparison <= 0) {
+            error = {
+              message: 'Evento S-1010 com data de início anterior a um registro já existente'
+            };
+          } else {
+            const previousMonthEnd = getPreviousMonth(parsedData.rub_ini_valid);
+
+            const { error: updateError } = await supabase
+              .from('evt_s1010')
+              .update({ rub_fim_valid: previousMonthEnd })
+              .eq('id', existingRecord.id);
+
+            if (updateError) {
+              error = updateError;
+            } else {
+              warnings.push('Importação realizou o encerramento de vigência de rubrica com código já existente');
+            }
+          }
+        }
+      }
+
+      if (!error) {
+        const { error: insertError } = await supabase
+          .from('evt_s1010')
+          .insert(parsedData);
+
+        error = insertError;
+      }
+    } catch (err) {
+      error = err instanceof Error ? { message: err.message } : { message: 'Erro desconhecido' };
+    }
 
     if (importacao) {
       await supabase
@@ -316,9 +366,10 @@ export function ImportPage() {
 
     return {
       success: !error,
-      message: `${fileName}: ${error ? 'Erro ao importar' : 'Rubrica importada'}`,
+      message: `${fileName}: ${error ? error.message : 'Rubrica importada'}`,
       records: error ? 0 : 1,
       xml_id: parsedData.xml_id || undefined,
+      warnings: warnings.length > 0 ? warnings : undefined,
     };
   }
 
@@ -795,24 +846,38 @@ export function ImportPage() {
           <h2 className="text-lg font-semibold text-white mb-4">Resultado da Importacao</h2>
           <div className="space-y-3 max-h-64 overflow-y-auto">
             {results.map((result, index) => (
-              <div
-                key={index}
-                className={`flex items-center gap-3 p-3 rounded-xl ${
-                  result.success ? 'bg-emerald-500/10' : 'bg-red-500/10'
-                }`}
-              >
-                {result.success ? (
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
-                ) : (
-                  <XCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
-                )}
-                <span className={`flex-1 ${result.success ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {result.message}
-                </span>
-                {result.eventType && (
-                  <span className={`px-2 py-1 text-xs font-medium rounded border ${getEventBadge(result.eventType)}`}>
-                    {result.eventType}
+              <div key={index} className="space-y-2">
+                <div
+                  className={`flex items-center gap-3 p-3 rounded-xl ${
+                    result.success ? 'bg-emerald-500/10' : 'bg-red-500/10'
+                  }`}
+                >
+                  {result.success ? (
+                    <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+                  ) : (
+                    <XCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
+                  )}
+                  <span className={`flex-1 ${result.success ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {result.message}
                   </span>
+                  {result.eventType && (
+                    <span className={`px-2 py-1 text-xs font-medium rounded border ${getEventBadge(result.eventType)}`}>
+                      {result.eventType}
+                    </span>
+                  )}
+                </div>
+                {result.warnings && result.warnings.length > 0 && (
+                  <div className="ml-8 space-y-1">
+                    {result.warnings.map((warning, wIndex) => (
+                      <div
+                        key={wIndex}
+                        className="flex items-center gap-2 p-2 rounded-lg bg-amber-500/10"
+                      >
+                        <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                        <span className="text-sm text-amber-400">{warning}</span>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             ))}
