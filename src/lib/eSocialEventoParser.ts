@@ -17,6 +17,18 @@ function cleanNamespace(tag: string): string {
   return tag.includes('}') ? tag.split('}')[1] : tag;
 }
 
+function extractVersionFromXmlns(xmlns: string | null): string {
+  if (!xmlns) return '1.0';
+
+  if (xmlns.includes('/')) {
+    const parts = xmlns.split('/');
+    const lastPart = parts[parts.length - 1];
+    return lastPart.substring(0, 20);
+  }
+
+  return xmlns.substring(0, 20);
+}
+
 export function extractXmlId(xmlContent: string): string | null {
   try {
     const parser = new DOMParser();
@@ -71,7 +83,7 @@ export function parseS1010Complete(
         }
     }
 
-    const xmlVersion = root.getAttribute('xmlns') || '1.0';
+    const xmlVersion = extractVersionFromXmlns(root.getAttribute('xmlns'));
 
     const xmlId = extractXmlId(xmlContent);
     if (!xmlId) {
