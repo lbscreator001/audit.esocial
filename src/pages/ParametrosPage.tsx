@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Settings, DollarSign, TrendingUp, Users, AlertCircle, FileText, Receipt, Scale, BookOpen, Search, X } from 'lucide-react';
+import { Settings, DollarSign, TrendingUp, Users, AlertCircle, FileText, Receipt, Scale, BookOpen, Search, X, Network, Plus, Edit2, Trash2, Power, PowerOff } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency, formatPercentage } from '../lib/formatters';
-import { EntendimentoTributacao } from '../types/database';
+import { EntendimentoTributacao, XmlRouterConfig } from '../types/database';
+import { clearRouterCache } from '../lib/xmlRouter';
 
 interface ParametrosSistema {
   id: string;
@@ -29,7 +30,7 @@ interface FaixaIRRF {
   valor_deducao: number;
 }
 
-type TabType = 'gerais' | 'inss' | 'irrf' | 'entendimentos';
+type TabType = 'gerais' | 'inss' | 'irrf' | 'entendimentos' | 'rotas';
 
 export default function ParametrosPage() {
   const [activeTab, setActiveTab] = useState<TabType>('gerais');
@@ -37,12 +38,15 @@ export default function ParametrosPage() {
   const [faixasINSS, setFaixasINSS] = useState<FaixaINSS[]>([]);
   const [faixasIRRF, setFaixasIRRF] = useState<FaixaIRRF[]>([]);
   const [entendimentos, setEntendimentos] = useState<EntendimentoTributacao[]>([]);
+  const [rotas, setRotas] = useState<XmlRouterConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterInss, setFilterInss] = useState<boolean | null>(null);
   const [filterIrrf, setFilterIrrf] = useState<boolean | null>(null);
   const [filterFgts, setFilterFgts] = useState<boolean | null>(null);
+  const [showRotaModal, setShowRotaModal] = useState(false);
+  const [editingRota, setEditingRota] = useState<XmlRouterConfig | null>(null);
 
   useEffect(() => {
     loadParametros();
@@ -51,6 +55,8 @@ export default function ParametrosPage() {
   useEffect(() => {
     if (activeTab === 'entendimentos') {
       loadEntendimentos();
+    } else if (activeTab === 'rotas') {
+      loadRotas();
     }
   }, [activeTab]);
 
@@ -114,6 +120,52 @@ export default function ParametrosPage() {
       setEntendimentos(data || []);
     } catch (err) {
       console.error('Error loading entendimentos:', err);
+    }
+  }
+
+  async function loadRotas() {
+    try {
+      const { data, error: rotasError } = await supabase
+        .from('xml_router_config')
+        .select('*')
+        .order('ordem_prioridade', { ascending: false });
+
+      if (rotasError) throw rotasError;
+      setRotas(data || []);
+    } catch (err) {
+      console.error('Error loading rotas:', err);
+    }
+  }
+
+  async function toggleRotaAtiva(rota: XmlRouterConfig) {
+    try {
+      const { error } = await supabase
+        .from('xml_router_config')
+        .update({ ativo: !rota.ativo })
+        .eq('id', rota.id);
+
+      if (error) throw error;
+      clearRouterCache();
+      loadRotas();
+    } catch (err) {
+      console.error('Error toggling rota:', err);
+    }
+  }
+
+  async function deleteRota(rotaId: string) {
+    if (!confirm('Tem certeza que deseja remover esta rota?')) return;
+
+    try {
+      const { error } = await supabase
+        .from('xml_router_config')
+        .delete()
+        .eq('id', rotaId);
+
+      if (error) throw error;
+      clearRouterCache();
+      loadRotas();
+    } catch (err) {
+      console.error('Error deleting rota:', err);
     }
   }
 
@@ -187,6 +239,7 @@ export default function ParametrosPage() {
     { id: 'inss' as TabType, label: 'Tabela INSS', icon: Receipt },
     { id: 'irrf' as TabType, label: 'Tabela IRRF', icon: Scale },
     { id: 'entendimentos' as TabType, label: 'Entendimento de Tributação', icon: BookOpen },
+    { id: 'rotas' as TabType, label: 'Roteamento XML', icon: Network },
   ];
 
   return (
@@ -626,6 +679,151 @@ export default function ParametrosPage() {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {activeTab === 'rotas' && (
+            <div className="space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <div className="flex items-start gap-3">
+                  <Network className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="font-medium text-blue-900 mb-1">Configuração de Roteamento XML</h3>
+                    <p className="text-sm text-blue-800">
+                      Configure como os eventos eSocial devem ser identificados e direcionados para as tabelas de destino.
+                      As rotas mapeiam as tags XML para as tabelas SQL correspondentes.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Tag XML
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Código Evento
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Tabela Destino
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Descrição
+                        </th>
+                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Prioridade
+                        </th>
+                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Status
+                        </th>
+                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Ações
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {rotas.map((rota, index) => (
+                        <tr key={rota.id} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className="font-mono text-sm font-medium text-gray-900">
+                              {rota.tag_xml}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                              {rota.codigo_evento}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className="font-mono text-sm text-gray-700">
+                              {rota.tabela_destino}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="text-sm text-gray-900 max-w-xs truncate">
+                              {rota.descricao || '-'}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            <span className="text-sm font-medium text-gray-900">
+                              {rota.ordem_prioridade}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                              rota.ativo
+                                ? 'bg-green-100 text-green-800'
+                                : 'bg-gray-100 text-gray-800'
+                            }`}>
+                              {rota.ativo ? 'Ativa' : 'Inativa'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            <div className="flex items-center justify-center gap-2">
+                              <button
+                                onClick={() => toggleRotaAtiva(rota)}
+                                className={`p-1 rounded hover:bg-gray-100 ${
+                                  rota.ativo ? 'text-green-600' : 'text-gray-400'
+                                }`}
+                                title={rota.ativo ? 'Desativar' : 'Ativar'}
+                              >
+                                {rota.ativo ? <Power className="w-4 h-4" /> : <PowerOff className="w-4 h-4" />}
+                              </button>
+                              <button
+                                onClick={() => deleteRota(rota.id)}
+                                className="p-1 text-red-600 rounded hover:bg-red-50"
+                                title="Remover"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {rotas.length === 0 && (
+                  <div className="text-center py-12">
+                    <Network className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">
+                      Nenhuma rota configurada
+                    </h3>
+                    <p className="text-gray-600">
+                      Adicione rotas para configurar o roteamento de eventos eSocial.
+                    </p>
+                  </div>
+                )}
+
+                <div className="bg-gray-50 px-6 py-3 border-t border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-gray-600">
+                      Total: <span className="font-semibold">{rotas.length}</span> rotas configuradas
+                      ({rotas.filter(r => r.ativo).length} ativas)
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                  <div className="text-sm text-yellow-800">
+                    <p className="font-medium mb-1">Como adicionar novos eventos:</p>
+                    <ol className="list-decimal list-inside space-y-1 ml-2">
+                      <li>Identifique a tag XML do evento (ex: evtTabRubr para S-1010)</li>
+                      <li>Crie a tabela de destino no banco de dados (ex: evt_s1010)</li>
+                      <li>Implemente o parser específico no arquivo eSocialEventoParser.ts</li>
+                      <li>Adicione a rota manualmente no banco através do SQL ou interface de administração</li>
+                    </ol>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>

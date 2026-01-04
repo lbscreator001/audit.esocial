@@ -1,8 +1,10 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { parseS1010, parseS1200, detectEventType, isEventSupported, getEventDescription } from '../lib/xmlParser';
+import { parseS1200, detectEventType, isEventSupported, getEventDescription } from '../lib/xmlParser';
 import { isZipFile, extractXmlsFromZip, validateZipSize, type ExtractedFile } from '../lib/zipExtractor';
+import { routeEsocialEvent } from '../lib/xmlRouter';
+import { parseCompleteEvent } from '../lib/eSocialEventoParser';
 import {
   Upload,
   FileText,
@@ -23,6 +25,8 @@ interface ImportResult {
   message: string;
   records: number;
   eventType?: string;
+  destino_sql?: string;
+  xml_id?: string;
 }
 
 interface UnsupportedFile {
@@ -210,24 +214,41 @@ export function ImportPage() {
 
       try {
         const content = item.file ? await item.file.text() : item.extracted?.content || '';
-        const eventType = detectEventType(content);
 
-        if (!isEventSupported(eventType)) {
-          newUnsupported.push({
-            fileName,
-            filePath,
-            eventType,
-            eventDescription: getEventDescription(eventType)
-          });
+        const routingResult = await routeEsocialEvent(content);
+
+        if (!routingResult.sucesso) {
+          const eventType = detectEventType(content);
+          if (!isEventSupported(eventType)) {
+            newUnsupported.push({
+              fileName,
+              filePath,
+              eventType,
+              eventDescription: getEventDescription(eventType)
+            });
+          } else {
+            newResults.push({
+              success: false,
+              message: `${fileName}: ${routingResult.erro || 'Erro no roteamento'}`,
+              records: 0,
+            });
+          }
           continue;
         }
 
-        if (eventType === 'S-1010') {
-          const result = await processS1010(fileName, content, item.zipFileName, filePath);
-          newResults.push({ ...result, eventType: 'S-1010' });
-        } else if (eventType === 'S-1200') {
+        if (routingResult.evento_esocial === 'S-1010') {
+          const result = await processEvtS1010(fileName, content, item.zipFileName, filePath, routingResult.destino_sql!);
+          newResults.push({ ...result, eventType: 'S-1010', destino_sql: routingResult.destino_sql });
+        } else if (routingResult.evento_esocial === 'S-1200') {
           const result = await processS1200(fileName, content, item.zipFileName, filePath);
           newResults.push({ ...result, eventType: 'S-1200' });
+        } else {
+          newUnsupported.push({
+            fileName,
+            filePath,
+            eventType: routingResult.evento_esocial || 'UNKNOWN',
+            eventDescription: `Evento ${routingResult.evento_esocial} não implementado`
+          });
         }
       } catch (error) {
         newResults.push({
@@ -244,20 +265,24 @@ export function ImportPage() {
     loadImportacoes();
   }
 
-  async function processS1010(
+  async function processEvtS1010(
     fileName: string,
     content: string,
     zipFileName?: string,
-    pathInZip?: string
+    pathInZip?: string,
+    destinoSql?: string
   ): Promise<ImportResult> {
     if (!empresa) {
-      return { success: false, message: 'Empresa nao configurada', records: 0 };
+      return { success: false, message: 'Empresa não configurada', records: 0 };
     }
 
-    const rubricas = parseS1010(content);
+    const { user } = await supabase.auth.getUser();
+    const usuarioId = user?.id || null;
 
-    if (rubricas.length === 0) {
-      return { success: false, message: `${fileName}: Nenhuma rubrica encontrada`, records: 0 };
+    const parsedData = parseCompleteEvent(content, 'S-1010', empresa.id, usuarioId);
+
+    if (!parsedData) {
+      return { success: false, message: `${fileName}: Erro ao processar XML`, records: 0 };
     }
 
     const { data: importacao } = await supabase
@@ -269,52 +294,31 @@ export function ImportPage() {
         status: 'processing',
         arquivo_origem_zip: zipFileName || null,
         caminho_no_zip: pathInZip || null,
+        tabela_destino: destinoSql || 'evt_s1010',
       })
       .select()
       .single();
 
-    let processedCount = 0;
-    const errors: string[] = [];
-
-    for (const rubrica of rubricas) {
-      const { error } = await supabase
-        .from('rubricas')
-        .upsert(
-          {
-            empresa_id: empresa.id,
-            codigo: rubrica.codigo,
-            descricao: rubrica.descricao,
-            natureza: rubrica.natureza,
-            tipo: rubrica.tipo,
-            incid_inss: rubrica.incidInss,
-            incid_irrf: rubrica.incidIrrf,
-            incid_fgts: rubrica.incidFgts,
-          },
-          { onConflict: 'empresa_id,codigo' }
-        );
-
-      if (error) {
-        errors.push(`Rubrica ${rubrica.codigo}: ${error.message}`);
-      } else {
-        processedCount++;
-      }
-    }
+    const { error } = await supabase
+      .from('evt_s1010')
+      .insert(parsedData);
 
     if (importacao) {
       await supabase
         .from('importacoes')
         .update({
-          status: errors.length === 0 ? 'success' : 'partial',
-          registros_processados: processedCount,
-          erros: errors,
+          status: error ? 'error' : 'success',
+          registros_processados: error ? 0 : 1,
+          erros: error ? [error.message] : [],
         })
         .eq('id', importacao.id);
     }
 
     return {
-      success: errors.length === 0,
-      message: `${fileName}: ${processedCount} rubricas importadas`,
-      records: processedCount,
+      success: !error,
+      message: `${fileName}: ${error ? 'Erro ao importar' : 'Rubrica importada'}`,
+      records: error ? 0 : 1,
+      xml_id: parsedData.xml_id || undefined,
     };
   }
 
