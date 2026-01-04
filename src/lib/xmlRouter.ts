@@ -56,13 +56,24 @@ export async function routeEsocialEvent(conteudoXml: string): Promise<RouterResu
       };
     }
 
-    const root = xmlDoc.documentElement;
+    let root = xmlDoc.documentElement;
 
     if (!root.tagName.includes('eSocial')) {
       return {
         sucesso: false,
         erro: 'XML inválido: Tag raiz não é eSocial'
       };
+    }
+
+    // Trata XMLs com estrutura retornoProcessamentoDownload
+    // Estrutura: eSocial > retornoProcessamentoDownload > evento > eSocial > evtXXX
+    const retornoDownload = root.getElementsByTagName('retornoProcessamentoDownload')[0];
+    if (retornoDownload) {
+      const evento = retornoDownload.getElementsByTagName('evento')[0];
+      const innerEsocial = evento?.getElementsByTagName('eSocial')[0];
+      if (innerEsocial) {
+        root = innerEsocial;
+      }
     }
 
     const routerConfig = await loadRouterConfig();
