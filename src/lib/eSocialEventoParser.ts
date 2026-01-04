@@ -27,27 +27,14 @@ export function extractXmlId(xmlContent: string): string | null {
       return null;
     }
 
-    const root = xmlDoc.documentElement;
-
-    for (let i = 0; i < root.children.length; i++) {
-      const child = root.children[i];
-      const tagLimpa = cleanNamespace(child.tagName);
-
-      if (tagLimpa === 'Signature') {
-        continue;
-      }
-
-      const idAttr = child.getAttribute('Id');
+    // Busca o atributo Id em qualquer elemento do XML, independente da profundidade
+    const todosElementos = xmlDoc.getElementsByTagName('*');
+    
+    for (let i = 0; i < todosElementos.length; i++) {
+      const elemento = todosElementos[i];
+      const idAttr = elemento.getAttribute('Id');
       if (idAttr) {
         return idAttr;
-      }
-
-      for (let j = 0; j < child.children.length; j++) {
-        const subChild = child.children[j];
-        const subIdAttr = subChild.getAttribute('Id');
-        if (subIdAttr) {
-          return subIdAttr;
-        }
       }
     }
 
@@ -73,7 +60,17 @@ export function parseS1010Complete(
       return null;
     }
 
-    const root = xmlDoc.documentElement;
+    // Tenta localizar a raiz correta (lidando com retornoProcessamentoDownload)
+    let root = xmlDoc.documentElement;
+    const retornoDownload = root.getElementsByTagName('retornoProcessamentoDownload')[0];
+    if (retornoDownload) {
+        const evento = retornoDownload.getElementsByTagName('evento')[0];
+        const innerEsocial = evento?.getElementsByTagName('eSocial')[0];
+        if (innerEsocial) {
+            root = innerEsocial;
+        }
+    }
+
     const xmlVersion = root.getAttribute('xmlns') || '1.0';
 
     const xmlId = extractXmlId(xmlContent);
@@ -106,8 +103,10 @@ export function parseS1010Complete(
     const ideRubrica = rubricaData?.getElementsByTagName('ideRubrica')[0];
     const dadosRubrica = rubricaData?.getElementsByTagName('dadosRubrica')[0];
 
-    const recibo = root.getElementsByTagName('Recibo')[0];
-    const retornoEvento = root.getElementsByTagName('retornoEvento')[0];
+    // Busca recibo e retornoEvento em todo o documento, pois podem estar fora do eSocial interno
+    const docRoot = xmlDoc.documentElement;
+    const recibo = docRoot.getElementsByTagName('Recibo')[0] || docRoot.getElementsByTagName('recibo')[0];
+    const retornoEvento = docRoot.getElementsByTagName('retornoEvento')[0];
 
     const result: Partial<EventoS1010Insert> = {
       empresa_id: empresaId,
