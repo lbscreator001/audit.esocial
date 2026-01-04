@@ -15,7 +15,8 @@ import {
   ChevronDown,
   Plus,
   Check,
-  LogOut
+  LogOut,
+  Scale
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -30,8 +31,9 @@ const menuItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'import', label: 'Importar XML', icon: Upload },
   { id: 'rubricas', label: 'Rubricas', icon: FileSpreadsheet },
+  { id: 'analise-rubricas', label: 'Analise Rubricas', icon: Scale },
   { id: 'colaboradores', label: 'Colaboradores', icon: Users },
-  { id: 'parametros', label: 'Parâmetros', icon: Settings },
+  { id: 'parametros', label: 'Parametros', icon: Settings },
 ];
 
 export function Layout({ children, currentPage, onNavigate, onSidebarNavigate, breadcrumbs }: LayoutProps) {

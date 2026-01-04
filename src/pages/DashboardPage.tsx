@@ -1,40 +1,41 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
+import { getAuditSummary } from '../lib/auditEngine';
 import { formatCurrency, formatCompetenciaShort } from '../lib/formatters';
 import {
-  Users,
-  DollarSign,
   AlertTriangle,
   TrendingUp,
+  TrendingDown,
   ChevronRight,
   FileText,
   CheckCircle2,
-  XCircle
+  XCircle,
+  ShieldAlert,
+  Coins
 } from 'lucide-react';
-import type { Apuracao, Colaborador, Divergencia } from '../types/database';
+import type { Apuracao } from '../types/database';
 
 interface DashboardProps {
   onNavigateToMonth: (competencia: string) => void;
 }
 
 interface DashboardStats {
-  totalColaboradores: number;
-  totalFolhaBruta: number;
+  totalRisco: number;
+  totalOportunidade: number;
   totalDivergencias: number;
-  totalEconomia: number;
+  porTributo: Record<string, { risco: number; oportunidade: number; count: number }>;
 }
 
 export function DashboardPage({ onNavigateToMonth }: DashboardProps) {
   const { empresa } = useAuth();
   const [stats, setStats] = useState<DashboardStats>({
-    totalColaboradores: 0,
-    totalFolhaBruta: 0,
+    totalRisco: 0,
+    totalOportunidade: 0,
     totalDivergencias: 0,
-    totalEconomia: 0,
+    porTributo: {},
   });
   const [apuracoes, setApuracoes] = useState<Apuracao[]>([]);
-  const [divergenciasPorTipo, setDivergenciasPorTipo] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -48,86 +49,47 @@ export function DashboardPage({ onNavigateToMonth }: DashboardProps) {
 
     setLoading(true);
 
-    const [colaboradoresRes, apuracoesRes, divergenciasRes] = await Promise.all([
-      supabase
-        .from('colaboradores')
-        .select('id')
-        .eq('empresa_id', empresa.id),
+    const [auditSummary, apuracoesRes] = await Promise.all([
+      getAuditSummary(empresa.id),
       supabase
         .from('apuracoes')
         .select('*')
         .eq('empresa_id', empresa.id)
         .order('competencia', { ascending: false }),
-      supabase
-        .from('divergencias')
-        .select('tipo')
-        .eq('empresa_id', empresa.id),
     ]);
 
-    const colaboradores = colaboradoresRes.data || [];
-    const apuracoesData = apuracoesRes.data || [];
-    const divergencias = divergenciasRes.data || [];
-
-    const totalFolhaBruta = apuracoesData.reduce(
-      (sum, a) => sum + (a.total_bruto_original || 0),
-      0
-    );
-
-    const totalEconomia = apuracoesData.reduce((sum, a) => {
-      const diffInss = (a.total_inss_original || 0) - (a.total_inss_recalculado || 0);
-      const diffIrrf = (a.total_irrf_original || 0) - (a.total_irrf_recalculado || 0);
-      const diffFgts = (a.total_fgts_original || 0) - (a.total_fgts_recalculado || 0);
-      return sum + diffInss + diffIrrf + diffFgts;
-    }, 0);
-
-    const tiposContagem: Record<string, number> = {};
-    divergencias.forEach((d) => {
-      tiposContagem[d.tipo] = (tiposContagem[d.tipo] || 0) + 1;
-    });
-
-    setStats({
-      totalColaboradores: colaboradores.length,
-      totalFolhaBruta,
-      totalDivergencias: divergencias.length,
-      totalEconomia: Math.abs(totalEconomia),
-    });
-    setApuracoes(apuracoesData);
-    setDivergenciasPorTipo(tiposContagem);
+    setStats(auditSummary);
+    setApuracoes(apuracoesRes.data || []);
     setLoading(false);
   }
 
   const kpiCards = [
     {
-      label: 'Colaboradores',
-      value: stats.totalColaboradores.toString(),
-      icon: Users,
-      color: 'bg-blue-500',
-      bgColor: 'bg-blue-500/10',
-      textColor: 'text-blue-400',
+      label: 'Total Risco',
+      value: formatCurrency(stats.totalRisco),
+      icon: ShieldAlert,
+      bgColor: 'bg-red-500/10',
+      textColor: 'text-red-400',
+      borderColor: 'border-red-500/30',
+      description: 'Passivo tributario potencial',
     },
     {
-      label: 'Folha Bruta Total',
-      value: formatCurrency(stats.totalFolhaBruta),
-      icon: DollarSign,
-      color: 'bg-emerald-500',
+      label: 'Total Oportunidades',
+      value: formatCurrency(stats.totalOportunidade),
+      icon: Coins,
       bgColor: 'bg-emerald-500/10',
       textColor: 'text-emerald-400',
+      borderColor: 'border-emerald-500/30',
+      description: 'Creditos recuperaveis',
     },
     {
-      label: 'Divergencias',
+      label: 'Total Divergencias',
       value: stats.totalDivergencias.toString(),
       icon: AlertTriangle,
-      color: 'bg-amber-500',
       bgColor: 'bg-amber-500/10',
       textColor: 'text-amber-400',
-    },
-    {
-      label: 'Potencial Recuperacao',
-      value: formatCurrency(stats.totalEconomia),
-      icon: TrendingUp,
-      color: 'bg-teal-500',
-      bgColor: 'bg-teal-500/10',
-      textColor: 'text-teal-400',
+      borderColor: 'border-amber-500/30',
+      description: 'Itens para revisao',
     },
   ];
 
@@ -142,25 +104,32 @@ export function DashboardPage({ onNavigateToMonth }: DashboardProps) {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-white mb-1">Dashboard</h1>
-        <p className="text-slate-400">Visao consolidada da auditoria de folha de pagamento</p>
+        <h1 className="text-2xl font-bold text-white mb-1">Dashboard de Compliance</h1>
+        <p className="text-slate-400">Analise consolidada de riscos e oportunidades tributarias</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {kpiCards.map((card) => {
           const Icon = card.icon;
           return (
             <div
               key={card.label}
-              className="bg-slate-800/50 backdrop-blur-sm border border-slate-700/50 rounded-2xl p-6"
+              className={`bg-slate-800/50 backdrop-blur-sm border ${card.borderColor} rounded-2xl p-6 transition-all hover:scale-[1.02]`}
             >
               <div className="flex items-start justify-between mb-4">
                 <div className={`w-12 h-12 ${card.bgColor} rounded-xl flex items-center justify-center`}>
                   <Icon className={`w-6 h-6 ${card.textColor}`} />
                 </div>
+                {card.label === 'Total Risco' && stats.totalRisco > 0 && (
+                  <TrendingDown className="w-5 h-5 text-red-400" />
+                )}
+                {card.label === 'Total Oportunidades' && stats.totalOportunidade > 0 && (
+                  <TrendingUp className="w-5 h-5 text-emerald-400" />
+                )}
               </div>
               <p className="text-slate-400 text-sm mb-1">{card.label}</p>
-              <p className="text-2xl font-bold text-white">{card.value}</p>
+              <p className={`text-2xl font-bold ${card.textColor}`}>{card.value}</p>
+              <p className="text-slate-500 text-xs mt-2">{card.description}</p>
             </div>
           );
         })}
@@ -249,11 +218,11 @@ export function DashboardPage({ onNavigateToMonth }: DashboardProps) {
 
         <div className="bg-slate-800/50 backdrop-blur-sm border border-slate-700/50 rounded-2xl p-6">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-lg font-semibold text-white">Divergencias por Tipo</h2>
+            <h2 className="text-lg font-semibold text-white">Impacto por Tributo</h2>
             <AlertTriangle className="w-5 h-5 text-slate-500" />
           </div>
 
-          {Object.keys(divergenciasPorTipo).length === 0 ? (
+          {Object.keys(stats.porTributo).length === 0 ? (
             <div className="text-center py-12">
               <div className="w-16 h-16 bg-emerald-500/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
                 <CheckCircle2 className="w-8 h-8 text-emerald-400" />
@@ -263,32 +232,71 @@ export function DashboardPage({ onNavigateToMonth }: DashboardProps) {
             </div>
           ) : (
             <div className="space-y-4">
-              {Object.entries(divergenciasPorTipo).map(([tipo, count]) => {
-                const total = Object.values(divergenciasPorTipo).reduce((a, b) => a + b, 0);
-                const percentage = (count / total) * 100;
-
-                const colors: Record<string, string> = {
-                  'INSS': 'bg-blue-500',
-                  'IRRF': 'bg-amber-500',
-                  'FGTS': 'bg-teal-500',
-                  'Rubrica': 'bg-red-500',
+              {Object.entries(stats.porTributo).map(([tributo, data]) => {
+                const tributoLabels: Record<string, string> = {
+                  'INSS_PATRONAL': 'INSS Patronal',
+                  'INSS_SEGURADO': 'INSS Segurado',
+                  'INSS_RAT': 'INSS RAT',
+                  'INSS_TERCEIROS': 'INSS Terceiros',
+                  'FGTS': 'FGTS',
+                  'IRRF': 'IRRF',
+                  'CSLL': 'CSLL',
+                  'MULTIPLO': 'Multiplo',
                 };
 
+                const maxValue = Math.max(
+                  ...Object.values(stats.porTributo).map(d => d.risco + d.oportunidade)
+                );
+                const totalTributo = data.risco + data.oportunidade;
+                const riscoPercent = maxValue > 0 ? (data.risco / maxValue) * 100 : 0;
+                const opPercent = maxValue > 0 ? (data.oportunidade / maxValue) * 100 : 0;
+
                 return (
-                  <div key={tipo}>
+                  <div key={tributo}>
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm text-slate-300">{tipo}</span>
-                      <span className="text-sm text-slate-400">{count}</span>
+                      <span className="text-sm text-slate-300">{tributoLabels[tributo] || tributo}</span>
+                      <div className="flex items-center gap-3 text-xs">
+                        <span className="text-slate-500">{data.count} itens</span>
+                        {data.risco > 0 && (
+                          <span className="text-red-400">{formatCurrency(data.risco)}</span>
+                        )}
+                        {data.oportunidade > 0 && (
+                          <span className="text-emerald-400">{formatCurrency(data.oportunidade)}</span>
+                        )}
+                      </div>
                     </div>
-                    <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full ${colors[tipo] || 'bg-slate-500'} rounded-full transition-all`}
-                        style={{ width: `${percentage}%` }}
-                      />
+                    <div className="h-2 bg-slate-700 rounded-full overflow-hidden flex">
+                      {data.risco > 0 && (
+                        <div
+                          className="h-full bg-red-500 rounded-l-full transition-all"
+                          style={{ width: `${riscoPercent}%` }}
+                        />
+                      )}
+                      {data.oportunidade > 0 && (
+                        <div
+                          className={`h-full bg-emerald-500 transition-all ${data.risco === 0 ? 'rounded-l-full' : ''} rounded-r-full`}
+                          style={{ width: `${opPercent}%` }}
+                        />
+                      )}
                     </div>
                   </div>
                 );
               })}
+
+              <div className="pt-4 mt-4 border-t border-slate-700">
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded bg-red-500" />
+                      <span className="text-slate-400">Risco</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded bg-emerald-500" />
+                      <span className="text-slate-400">Oportunidade</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>

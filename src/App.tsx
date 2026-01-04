@@ -5,6 +5,7 @@ import { MonthlyPayrollPage } from './pages/MonthlyPayrollPage';
 import { EmployeeDetailPage } from './pages/EmployeeDetailPage';
 import { ImportPage } from './pages/ImportPage';
 import { RubricasPage } from './pages/RubricasPage';
+import { AnaliseRubricasPage } from './pages/AnaliseRubricasPage';
 import { ColaboradoresPage } from './pages/ColaboradoresPage';
 import ParametrosPage from './pages/ParametrosPage';
 import { LoginPage } from './pages/LoginPage';
@@ -16,6 +17,7 @@ type Page =
   | { type: 'dashboard' }
   | { type: 'import' }
   | { type: 'rubricas' }
+  | { type: 'analise-rubricas' }
   | { type: 'colaboradores' }
   | { type: 'parametros' }
   | { type: 'monthly'; competencia: string }
@@ -52,6 +54,9 @@ function AppContent() {
       case 'rubricas':
         setCurrentPage({ type: 'rubricas' });
         break;
+      case 'analise-rubricas':
+        setCurrentPage({ type: 'analise-rubricas' });
+        break;
       case 'colaboradores':
         setCurrentPage({ type: 'colaboradores' });
         break;
@@ -79,6 +84,8 @@ function AppContent() {
         return 'import';
       case 'rubricas':
         return 'rubricas';
+      case 'analise-rubricas':
+        return 'analise-rubricas';
       case 'colaboradores':
         return 'colaboradores';
       case 'parametros':
@@ -105,10 +112,12 @@ function AppContent() {
         return [{ label: 'Importar XML' }];
       case 'rubricas':
         return [{ label: 'Rubricas' }];
+      case 'analise-rubricas':
+        return [{ label: 'Analise de Rubricas' }];
       case 'colaboradores':
         return [{ label: 'Colaboradores' }];
       case 'parametros':
-        return [{ label: 'Parâmetros' }];
+        return [{ label: 'Parametros' }];
     }
   }
 
@@ -142,6 +151,8 @@ function AppContent() {
         return <ImportPage />;
       case 'rubricas':
         return <RubricasPage />;
+      case 'analise-rubricas':
+        return <AnaliseRubricasPage />;
       case 'colaboradores':
         return <ColaboradoresPage onNavigateToEmployee={handleNavigateToEmployee} />;
       case 'parametros':
